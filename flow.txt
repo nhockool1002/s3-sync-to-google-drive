@@ -1,0 +1,221 @@
+FLOW ĐỒNG BỘ S3 → GOOGLE DRIVE
+================================
+
+Ký hiệu:
+- [UI]  : dữ liệu/người dùng nhập từ CLI.
+- [ENV] : giá trị lấy từ biến môi trường / file .env.
+- [API] : gọi tới AWS S3 / Google Drive.
+- [FS]  : thao tác file hệ thống (ổ đĩa, logs, thư mục tạm).
+
+------------------------------------------------------------
+1. KHỞI ĐỘNG ỨNG DỤNG
+------------------------------------------------------------
+1.1 Chạy lệnh
+    - `python3 -m app.main`
+
+1.2 Tải cấu hình môi trường
+    - [ENV] `dotenv.load_dotenv()` đọc `.env` nếu tồn tại.
+    - Các biến chính:
+      - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`
+      - `LOG_DIR`
+      - (OAuth Google dùng trong `drive_client`, lấy từ `credentials.json` + `token.json`)
+
+------------------------------------------------------------
+2. THU THẬP INPUT TỪ NGƯỜI DÙNG (CLI)
+------------------------------------------------------------
+2.1 Nhập thông tin S3
+    - [UI] `bucket`  : tên S3 bucket. VD: `mymemories-image`.
+    - [UI] `prefix`  : "folder" trên S3 (có thể trống). VD: `bentrebatri180922`.
+
+2.2 Nhập thông tin Google Drive
+    - [UI] `drive_folder_id` : ID của folder Drive đích.
+      - Lấy từ URL: https://drive.google.com/drive/folders/<FOLDER_ID>.
+
+2.3 Nhập thông tin batching
+    - [UI] `batch_size` : số object xử lý mỗi batch (mặc định 50).
+
+------------------------------------------------------------
+3. KHỞI TẠO LOG VÀ THƯ MỤC TẠM
+------------------------------------------------------------
+3.1 Thư mục tạm
+    - Mặc định `temp_dir = "/tmp/s3_sync"`.
+    - [FS] `ensure_dir(temp_dir)` → tạo thư mục nếu chưa có.
+
+3.2 File log
+    - [FS] Tạo đường dẫn log qua `get_log_file_path(LOG_DIR, prefix)`, dạng:
+      - `LOG_DIR/YYYYMMDD_HHMMSS_<prefix>.log`.
+
+------------------------------------------------------------
+4. KHỞI TẠO GOOGLE DRIVE SERVICE (OAUTH USER)
+------------------------------------------------------------
+4.1 Lấy đường dẫn credentials/token
+    - [ENV] Trong `drive_client._get_paths()`:
+      - `GOOGLE_OAUTH_CLIENT_SECRETS` (tùy chọn) hoặc `./credentials.json`.
+      - `GOOGLE_OAUTH_TOKEN_FILE` (tùy chọn) hoặc `./token.json`.
+
+4.2 OAuth flow
+    - [API] Nếu đã có `token.json` hợp lệ:
+      - Load token, refresh nếu hết hạn.
+    - [API] Nếu chưa có token:
+      - `InstalledAppFlow.from_client_secrets_file(...).run_local_server(...)`
+      - Mở trình duyệt để người dùng đăng nhập / cấp quyền.
+      - Sau khi login thành công, lưu `token.json` ([FS]).
+
+4.3 Tạo Drive service
+    - [API] `build("drive", "v3", credentials=creds)` → đối tượng `service` dùng chung.
+
+------------------------------------------------------------
+5. LIỆT KÊ OBJECTS TRONG S3
+------------------------------------------------------------
+5.1 Tạo S3 client
+    - [ENV] `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`.
+    - [API] `boto3.client("s3", ...)`.
+
+5.2 Liệt kê object theo prefix
+    - [API] `list_objects_v2` qua paginator:
+      - `Bucket=bucket`, `Prefix=prefix` (nếu có).
+    - Kết quả:
+      - `raw_objects`: danh sách dict object S3.
+
+5.3 Lọc bỏ file ẩn / hệ thống
+    - [FS logic] Với mỗi `obj` trong `raw_objects`:
+      - Lấy `name = basename(obj["Key"])`.
+      - Bỏ qua nếu:
+        - `name.startswith(".")` hoặc
+        - `name.lower().endswith(".ds_store")`.
+    - `objects`: danh sách object đã được lọc sạch file ẩn.
+    - `total_objects = len(objects)`.
+
+5.4 Ghi thông tin đầu log
+    - [FS] Ghi các dòng:
+      - Bucket, Prefix, Drive folder ID, `Total S3 objects`.
+
+------------------------------------------------------------
+6. LẤY DANH SÁCH FILE ĐÃ TỒN TẠI TRÊN DRIVE ĐÍCH
+------------------------------------------------------------
+6.1 Gọi `list_existing_names(service, drive_folder_id)`
+    - [API] `files.list`:
+      - Query:
+        - Nếu có `drive_folder_id`: `'<folder_id>' in parents and trashed = false`.
+        - Nếu không: `'root' in parents and trashed = false`.
+      - Lặp qua tất cả page, mỗi page tối đa 1000 file.
+    - Kết quả:
+      - `existing_names: set[str]` chứa **tên file** hiện có trong folder đích.
+
+------------------------------------------------------------
+7. CHIA BATCH VÀ XỬ LÝ TỪNG BATCH
+------------------------------------------------------------
+7.1 Gom batch
+    - [FS logic] Duyệt `objects`:
+      - Push object vào `batch` cho đến khi `len(batch) == batch_size`.
+      - Khi đủ batch:
+        - Tăng `batch_index`.
+        - In thông tin batch ra console (Processed/Total).
+        - Gọi `_process_batch(...)`.
+
+7.2 Batch cuối cùng
+    - Nếu sau vòng lặp vẫn còn `batch` chưa xử lý:
+      - `batch_index += 1`, log “batch cuối”.
+      - Gọi `_process_batch(...)` cho batch này.
+
+------------------------------------------------------------
+8. XỬ LÝ CHI TIẾT TRONG `_process_batch`
+------------------------------------------------------------
+8.1 Chuẩn bị
+    - `batch_len = len(batch)`.
+    - Biến đếm:
+      - `success`, `failed`, `skipped`.
+
+8.2 Duyệt từng object trong batch
+    - For `idx, obj in enumerate(batch, start=1)`:
+      - `key = obj["Key"]`.
+      - Tính `rel_path` tương đối so với prefix.
+      - Loại bỏ `/` đầu để tránh path tuyệt đối.
+      - `file_name = basename(rel_path)` hoặc thay `/` bằng `_`.
+
+8.3 Bỏ qua file ẩn hệ thống
+    - [FS logic] Nếu `file_name` bắt đầu bằng `.` hoặc `.DS_Store`:
+      - Ghi log `[SKIP] [idx/batch_len] ... (file hệ thống/ẩn, không upload)`.
+      - `skipped += 1`.
+      - `continue`.
+
+8.4 Log tiến trình từng file
+    - In ra console:
+      - `Đang xử lý object [idx/batch_len] trong batch: <key>`.
+
+8.5 Kiểm tra file đã tồn tại trên Drive
+    - [FS logic] Nếu `file_name in existing_names`:
+      - Ghi log `[SKIP] [idx/batch_len] ... (đã tồn tại trên Drive)`.
+      - `skipped += 1`.
+      - `continue`.
+
+8.6 Tải file từ S3 về thư mục tạm
+    - [FS] `local_path = os.path.join(temp_dir, rel_path)`.
+      - Đảm bảo thư mục cha tồn tại (trong `download_object`).
+    - [API] `s3.download_file(bucket, key, local_path)`.
+
+8.7 Upload file lên Google Drive
+    - [API] `upload_file(service, local_path, drive_folder_id, file_name)`:
+      - Gọi `files.create` với `MediaFileUpload(local_path, resumable=True)`.
+    - Nếu thành công:
+      - Thêm `file_name` vào `existing_names`.
+      - Ghi log `[OK]   [idx/batch_len] <key>`.
+      - `success += 1`.
+
+8.8 Dọn file tạm ngay sau khi xử lý
+    - Dù thành công hay thất bại:
+      - [FS] `_safe_remove_file(local_path, temp_dir)`:
+        - Chỉ xoá nếu `local_path` nằm trong `temp_dir`.
+      - [FS] `_safe_cleanup_empty_dirs(os.path.dirname(local_path), temp_dir)`:
+        - Xoá các thư mục con rỗng phía trên (không vượt ra khỏi `temp_dir`).
+    - Nếu có exception trong quá trình download/upload:
+      - Ghi log `[FAIL] [idx/batch_len] <key> | <error>`.
+      - Thêm vào `failures`.
+
+8.9 Hoàn tất batch
+    - [FS] `log_file.flush()`.
+    - Trả về `(success, failures, skipped)` cho batch đó.
+
+------------------------------------------------------------
+9. CẬP NHẬT THỐNG KÊ SAU MỖI BATCH
+------------------------------------------------------------
+9.1 Cộng dồn
+    - `total_processed += len(batch)`.
+    - `success += s`, `failed += len(fl)`, `skipped += sk`.
+    - `failures.extend(fl)`.
+
+9.2 In ra console
+    - `Kết thúc batch #N: [OK=s, FAIL=len(fl), SKIP=sk, REMAIN=remain]`.
+
+------------------------------------------------------------
+10. GHI TỔNG KẾT VÀ LOG LỖI
+------------------------------------------------------------
+10.1 Ghi SUMMARY
+    - [FS] Cuối file log:
+      - `Total objects`, `Processed`, `Success`, `Failed`, `Skipped`.
+
+10.2 Ghi chi tiết lỗi (nếu có)
+    - Nếu `failures` không rỗng:
+      - Ghi danh sách `- <key>: <error>`.
+
+------------------------------------------------------------
+11. DỌN DẸP THƯ MỤC TẠM SAU KHI KẾT THÚC
+------------------------------------------------------------
+11.1 Dọn toàn bộ temp_dir
+    - [FS] Trong `transfer_s3_to_drive`, sau khi đóng log:
+      - `shutil.rmtree(temp_dir, ignore_errors=True)`.
+      - `os.makedirs(temp_dir, exist_ok=True)` để chuẩn bị cho lần chạy sau.
+
+11.2 Kết quả
+    - Không giữ lại file media tạm trên máy.
+    - Dung lượng ổ đĩa không bị “ăn dần” qua nhiều lần sync.
+
+------------------------------------------------------------
+12. KẾT THÚC
+------------------------------------------------------------
+12.1 Hàm `transfer_s3_to_drive` trả về
+    - [FS] `log_path`: đường dẫn file log chi tiết cho lần chạy này.
+
+12.2 `main.py` in ra cho người dùng
+    - [UI] `Hoàn tất chuyển dữ liệu. File log chi tiết: <log_path>`.
+
