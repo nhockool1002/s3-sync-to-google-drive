@@ -71,6 +71,7 @@ def transfer_s3_to_drive(
     """
     ensure_dir(temp_dir)
     log_path = get_log_file_path(log_dir, prefix)
+    print(f"{_ts()} | File log chi tiết: {log_path}", flush=True)
 
     total_processed = 0
     success = 0
@@ -193,6 +194,13 @@ def transfer_s3_to_drive(
             f.write(f"\n{_ts()} | Failed objects:\n")
             for key, err in failures:
                 f.write(f"{_ts()} | - {key}: {err}\n")
+
+    print(
+        f"{_ts()} | Hoàn tất sync: "
+        f"Total={total_objects}, Processed={total_processed}, "
+        f"OK={success}, FAIL={failed}, SKIP={skipped}",
+        flush=True,
+    )
 
     # Dọn dẹp thư mục tạm sau khi hoàn tất (không ảnh hưởng logs)
     try:

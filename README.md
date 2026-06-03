@@ -32,6 +32,13 @@ AWS_SECRET_ACCESS_KEY=your_aws_secret_key
 AWS_DEFAULT_REGION=ap-southeast-1
 
 LOG_DIR=./logs
+TEMP_DIR=/tmp/s3_sync
+
+# Tuỳ chọn: bỏ comment để chạy không cần nhập tay
+# S3_BUCKET=your_bucket
+# S3_PREFIX=optional/folder
+# GOOGLE_DRIVE_FOLDER_ID=your_drive_folder_id
+# BATCH_SIZE=50
 ```
 
 ### 1.3. Cấu hình Google OAuth (Drive)
@@ -59,10 +66,37 @@ Lần chạy đầu tiên, app sẽ mở trình duyệt để bạn login và t�
 
 ## 2. Lệnh chính
 
-### 2.1. Chạy sync S3 → Google Drive (local)
+### 2.1. Mở menu chức năng
 
 ```bash
 python3 -m app.main
+```
+
+Menu sẽ hiện các chức năng để chọn:
+
+- Sync AWS S3 → Google Drive (chạy nền).
+- Sync AWS S3 → Google Drive (chạy trực tiếp + progress log).
+- Đếm object trong S3.
+- Đếm file trong Google Drive folder.
+- Tải file từ Google Drive.
+- Xem video trong Google Drive folder.
+- Tạo phụ đề SRT từ video/audio.
+- Chia video thành 2 phần.
+
+### 2.2. Chạy sync S3 → Google Drive nền (local)
+
+Trong menu, chọn `1. Sync AWS S3 -> Google Drive (chạy nền)`.
+
+Chức năng này sẽ hỏi thông tin cần thiết, sau đó **khởi chạy process nền** và trả terminal lại ngay. Kết quả in ra gồm:
+
+- `PID` của process sync.
+- File log tiến trình dạng `logs/YYYYMMDD_HHMMSS_<prefix>.progress.log`.
+- File PID dạng `logs/YYYYMMDD_HHMMSS_<prefix>.progress.pid`.
+
+Theo dõi tiến trình:
+
+```bash
+tail -f logs/YYYYMMDD_HHMMSS_<prefix>.progress.log
 ```
 
 Flow nhập liệu:
@@ -80,14 +114,39 @@ Flow nhập liệu:
 
 Kết quả:
 
-- File log được tạo trong thư mục `logs/` với tên dạng:  
+- File log tiến trình được tạo trong thư mục `logs/` với tên dạng:
+  `YYYYMMDD_HHMMSS_<prefix>.progress.log`
+- File log chi tiết được tạo trong thư mục `logs/` với tên dạng:
   `YYYYMMDD_HHMMSS_<prefix>.log`
 - Trong log có:
   - Tổng số object trên S3 (đã **bỏ qua file ẩn**).
   - Dòng chi tiết cho từng file: `[OK]`, `[SKIP]`, `[FAIL]`.
   - Tổng kết cuối cùng: `Total`, `Processed`, `Success`, `Failed`, `Skipped`.
 
-### 2.2. Đếm số file trong 1 folder Drive
+Chạy không tương tác bằng tham số:
+
+```bash
+python3 -m app.main \
+  --sync \
+  --bucket "mymemories-image" \
+  --prefix "bentrebatri180922" \
+  --drive-folder-id "<FOLDER_ID>" \
+  --batch-size 50
+```
+
+Hoặc khai báo sẵn `S3_BUCKET`, `S3_PREFIX`, `GOOGLE_DRIVE_FOLDER_ID`, `BATCH_SIZE` trong `.env` rồi chạy:
+
+```bash
+python3 -m app.main --sync
+```
+
+Nếu cần chạy trực tiếp trên terminal hiện tại, ví dụ lần đầu tạo `token.json` OAuth, dùng:
+
+```bash
+python3 -m app.main --sync --foreground --progress-log
+```
+
+### 2.3. Đếm số file trong 1 folder Drive
 
 Script `app/count_drive.py`:
 
@@ -105,7 +164,7 @@ Kết quả in ra terminal:
 - `Folder ID <ID> có X file (không tính file trong thùng rác).`
 - Hoặc `My Drive root có X file (không tính file trong thùng rác).`
 
-### 2.3. Tải file (video) từ Google Drive (`app.drive_download`)
+### 2.4. Tải file (video) từ Google Drive (`app.drive_download`)
 
 Dùng khi bạn có quyền xem file trên Drive (chủ sở hữu hoặc được chia sẻ) và muốn tải bản nhị phân qua API. Phạm vi **`drive.readonly`** cho phép đọc các file mà tài khoản đăng nhập có quyền — **khác** với token sync (`token.json`, scope `drive.file`) chủ yếu cho file do app tạo.
 
@@ -138,7 +197,7 @@ Chạy không tham số (hoặc thiếu nguồn/đích) sẽ vào các bước n
 
 **Lưu ý:** file kiểu Google Docs/Sheets (MIME `application/vnd.google-apps.*`) không tải bằng `get_media` như video; tool sẽ báo lỗi và gợi ý export nếu cần.
 
-### 2.4. Xem video trong folder Drive (`app.view_video_drive`)
+### 2.5. Xem video trong folder Drive (`app.view_video_drive`)
 
 Dùng cùng OAuth **`drive.readonly`** và **`token_download.json`** như mục 2.3. Tool khởi động **web server chỉ trên `127.0.0.1`**, quét đệ quy folder (và folder con), liệt kê mọi file có `mimeType` dạng `video/*`, mở trình duyệt để bạn chọn **Xem**; luồng phát đi qua endpoint local `/stream/<FILE_ID>` (hỗ trợ `Range` để seek) tới Google Drive `alt=media`.
 
@@ -183,15 +242,29 @@ docker build -t s3-to-gdrive .
 - Sau lần chạy đầu (local hoặc trong container), sẽ có thêm `token.json`.
 - Nếu dùng **tải file từ Drive** (mục 2.3), mount thêm `token_download.json` khi đã tạo trên host (tương tự `token.json`).
 
-### 3.3. Chạy container
+### 3.3. Chạy container nền
+
+Khi chạy Docker nền, nên khai báo sẵn `S3_BUCKET`, `S3_PREFIX`, `GOOGLE_DRIVE_FOLDER_ID`, `BATCH_SIZE` trong `.env` để container không phải chờ nhập liệu.
 
 ```bash
-docker run --rm -it \
+docker run -d --name s3-to-gdrive-sync \
   --env-file .env \
   -v "$(pwd)/logs:/app/logs" \
   -v "$(pwd)/credentials.json:/app/credentials.json:ro" \
   -v "$(pwd)/token.json:/app/token.json" \
   s3-to-gdrive
+```
+
+Theo dõi log container:
+
+```bash
+docker logs -f s3-to-gdrive-sync
+```
+
+Theo dõi file progress log trên host:
+
+```bash
+tail -f logs/*.progress.log
 ```
 
 Giải thích mount:
