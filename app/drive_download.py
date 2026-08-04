@@ -27,6 +27,10 @@ from googleapiclient.http import MediaIoBaseDownload
 # Đọc mọi file Drive mà user có quyền (khác drive.file chỉ thấy file do app tạo)
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
+FOLDER_MIME = "application/vnd.google-apps.folder"
+SHORTCUT_MIME = "application/vnd.google-apps.shortcut"
+GOOGLE_NATIVE_PREFIX = "application/vnd.google-apps."
+
 
 def _base_dir() -> str:
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -106,6 +110,86 @@ def parse_file_id_from_url(text: str) -> Optional[str]:
     if m:
         return m.group(1)
     return None
+
+
+def _list_children_page(
+    service: object, parent_id: str, page_token: Optional[str]
+) -> dict:
+    return (
+        service.files()
+        .list(
+            q=f"'{parent_id}' in parents and trashed = false",
+            spaces="drive",
+            fields="nextPageToken, files(id, name, mimeType, size)",
+            pageSize=1000,
+            pageToken=page_token,
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+        )
+        .execute()
+    )
+
+
+def list_files_recursive(
+    service: object,
+    parent_id: str,
+    prefix: str = "",
+) -> list[dict]:
+    """
+    Liệt kê đệ quy mọi file (không phải folder/shortcut) trong 1 folder Drive.
+
+    Bỏ qua file Google Workspace gốc (Docs/Sheets/Slides/...) vì không tải
+    trực tiếp bằng get_media được (cần export riêng, xem download_file()).
+
+    Trả về list dict: id, name, path (đường dẫn tương đối kèm thư mục con), mimeType, size.
+    """
+    out: list[dict] = []
+    page_token: Optional[str] = None
+
+    while True:
+        res = _list_children_page(service, parent_id, page_token)
+        for f in res.get("files", []):
+            fid = f.get("id") or ""
+            name = f.get("name") or ""
+            mime = f.get("mimeType") or ""
+            rel = f"{prefix}{name}" if prefix else name
+
+            if mime == FOLDER_MIME:
+                out.extend(list_files_recursive(service, fid, f"{rel}/"))
+            elif mime == SHORTCUT_MIME:
+                continue
+            elif mime.startswith(GOOGLE_NATIVE_PREFIX):
+                continue
+            else:
+                out.append(
+                    {
+                        "id": fid,
+                        "name": name,
+                        "path": rel,
+                        "mimeType": mime,
+                        "size": f.get("size"),
+                    }
+                )
+
+        page_token = res.get("nextPageToken")
+        if not page_token:
+            break
+
+    return out
+
+
+def download_file_by_id(service: object, file_id: str, output_path: str) -> None:
+    """
+    Tải nhanh 1 file nhị phân theo id, không gọi thêm API lấy metadata
+    (dùng khi đã có id/mimeType sẵn từ list_files_recursive()).
+    """
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
+    request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
+    with io.FileIO(output_path, "wb") as fh:
+        downloader = MediaIoBaseDownload(fh, request, chunksize=1024 * 1024)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
 
 
 def _export_mime_for_google_file(

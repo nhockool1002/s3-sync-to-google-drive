@@ -3,6 +3,8 @@
 Ứng dụng CLI (Python) hỗ trợ:
 
 - Đồng bộ/bơm dữ liệu từ **AWS S3** sang **Google Drive**.
+- Đồng bộ dữ liệu từ **Google Drive** sang **Cloudflare R2** (`app.drive_to_r2`), giữ nguyên cấu trúc thư mục con trên Drive khi đặt tên key trên R2.
+- **Nén (zip) 1 folder Google Drive** rồi upload thẳng file zip lên **Cloudflare R2** (`app.drive_zip_to_r2`).
 - **Tải file (video)** từ Google Drive xuống máy qua **Google Drive API** (OAuth, scope `drive.readonly`), tách token `token_download.json` khỏi luồng sync.
 - **Xem video trong folder Drive** (kèm thư mục con) qua trình duyệt local: `app.view_video_drive` — stream byte-range qua máy bạn.
 - Chạy được **trên máy local** hoặc trong **Docker**.
@@ -40,6 +42,24 @@ TEMP_DIR=/tmp/s3_sync
 # GOOGLE_DRIVE_FOLDER_ID=your_drive_folder_id
 # BATCH_SIZE=50
 ```
+
+### 1.2b. Cấu hình Cloudflare R2 (cho `app.drive_to_r2` / `app.drive_zip_to_r2`)
+
+Thêm vào `.env`:
+
+```bash
+R2_ACCOUNT_ID=your_cloudflare_account_id
+R2_ACCESS_KEY_ID=your_r2_access_key_id
+R2_SECRET_ACCESS_KEY=your_r2_secret_access_key
+
+# Tuỳ chọn: bỏ comment để chạy không cần nhập tay
+# R2_BUCKET=your_r2_bucket
+# R2_PREFIX=optional/prefix
+# R2_ZIP_KEY=backups/drive_export.zip
+# R2_BATCH_SIZE=50
+```
+
+Lấy `R2_ACCOUNT_ID` và tạo `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` tại **Cloudflare Dashboard → R2 → Manage API Tokens**. Có thể ghi đè endpoint mặc định (`https://<account_id>.r2.cloudflarestorage.com`) bằng biến `R2_ENDPOINT_URL` nếu cần.
 
 ### 1.3. Cấu hình Google OAuth (Drive)
 
@@ -82,6 +102,8 @@ Menu sẽ hiện các chức năng để chọn:
 - Xem video trong Google Drive folder.
 - Tạo phụ đề SRT từ video/audio.
 - Chia video thành 2 phần.
+- Sync Google Drive → Cloudflare R2.
+- Zip folder Google Drive → Cloudflare R2.
 
 ### 2.2. Chạy sync S3 → Google Drive nền (local)
 
@@ -225,6 +247,64 @@ python3 -m app.view_video_drive --folder-id "https://drive.google.com/drive/fold
 
 **Lưu ý:** shortcut Drive bị bỏ qua; file bị Drive chặn đọc (virus scan, abuse, quyền) vẫn có thể trả 403 khi phát. Cây thư mục rất lớn có thể mất lâu khi quét lần đầu.
 
+### 2.6. Sync Google Drive → Cloudflare R2 (`app.drive_to_r2`)
+
+Dùng cùng OAuth **`drive.readonly`** và **`token_download.json`** như mục 2.4/2.5. Quét đệ quy folder Drive nguồn, tải từng file về tạm rồi upload lên **R2** (S3-compatible), **giữ nguyên cấu trúc thư mục con** của Drive trong key trên R2 (khác `app.transfer` vốn dồn hết vào 1 folder Drive phẳng). Chạy theo batch, có log chi tiết (OK/FAIL/SKIP), tự skip key đã tồn tại trên R2, bỏ qua file Google Docs/Sheets/Slides gốc (không export) và shortcut.
+
+```bash
+python3 -m app.drive_to_r2 --help
+```
+
+**Tham số:**
+
+| Tham số | Ý nghĩa |
+|--------|---------|
+| `--drive-folder-id` | ID folder Drive nguồn |
+| `--bucket` | Tên bucket R2 đích |
+| `--prefix` | Prefix/key gốc trên R2 (có thể để trống) |
+| `--batch-size` | Số file xử lý mỗi batch (mặc định 50) |
+| `--log-dir` | Thư mục lưu log (mặc định `./logs`) |
+| `--temp-dir` | Thư mục tạm để tải file Drive trước khi upload |
+
+Ví dụ:
+
+```bash
+python3 -m app.drive_to_r2 \
+  --drive-folder-id "<FOLDER_ID>" \
+  --bucket "my-r2-bucket" \
+  --prefix "backups/drive" \
+  --batch-size 50
+```
+
+Không truyền tham số sẽ hỏi lần lượt: Drive folder ID, R2 bucket, R2 prefix (có thể khai báo sẵn `GOOGLE_DRIVE_FOLDER_ID`, `R2_BUCKET`, `R2_PREFIX` trong `.env`).
+
+### 2.7. Zip folder Google Drive → Cloudflare R2 (`app.drive_zip_to_r2`)
+
+Tải toàn bộ 1 folder Drive (đệ quy) về thư mục tạm, nén thành **1 file `.zip`** duy nhất (giữ cấu trúc thư mục con bên trong zip), rồi upload file zip đó lên **R2**. Phù hợp khi cần 1 bản backup gọn thay vì đồng bộ từng file.
+
+```bash
+python3 -m app.drive_zip_to_r2 --help
+```
+
+**Tham số:**
+
+| Tham số | Ý nghĩa |
+|--------|---------|
+| `--drive-folder-id` | ID folder Drive nguồn |
+| `--bucket` | Tên bucket R2 đích |
+| `--key` | Đường dẫn/tên file zip đích trên R2 (tự thêm `.zip` nếu thiếu), vd: `backups/drive_export.zip` |
+| `--log-dir` | Thư mục lưu log (mặc định `./logs`) |
+| `--temp-dir` | Thư mục tạm để tải/nén file (bị xoá sạch sau khi upload xong) |
+
+Ví dụ:
+
+```bash
+python3 -m app.drive_zip_to_r2 \
+  --drive-folder-id "<FOLDER_ID>" \
+  --bucket "my-r2-bucket" \
+  --key "backups/drive_export.zip"
+```
+
 ---
 
 ## 3. Chạy bằng Docker
@@ -281,6 +361,7 @@ Giải thích mount:
 - App **bỏ qua**:
   - File ẩn / hệ thống (bắt đầu bằng `.` hoặc `.DS_Store`).
   - File đã tồn tại trên Drive (trùng `name` bên trong folder đích).
+- `app.drive_to_r2` / `app.drive_zip_to_r2` (Drive → R2) **giữ nguyên cấu trúc thư mục con** của Drive, nhưng **bỏ qua** file Google Docs/Sheets/Slides/... gốc (`application/vnd.google-apps.*`, cần export riêng qua `app.drive_download`) và shortcut Drive.
 - Việc upload nhanh hay chậm phụ thuộc:
   - Băng thông mạng của bạn.
   - Dung lượng file (video nặng sẽ mất nhiều giây/phút).

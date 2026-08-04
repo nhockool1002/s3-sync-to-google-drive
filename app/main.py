@@ -277,6 +277,8 @@ def _print_menu() -> None:
     print("6. Xem video trong Google Drive folder")
     print("7. Tạo phụ đề SRT từ video/audio")
     print("8. Chia video thành 2 phần")
+    print("9. Sync Google Drive -> Cloudflare R2")
+    print("10. Zip folder Google Drive -> Cloudflare R2")
     print("0. Thoát")
 
 
@@ -328,6 +330,14 @@ def _run_menu(base_args: argparse.Namespace) -> None:
                 from .video_split import main as video_split_main
 
                 _run_module_main("app.video_split", video_split_main)
+            elif choice == "9":
+                from .drive_to_r2 import main as drive_to_r2_main
+
+                _run_module_main("app.drive_to_r2", drive_to_r2_main)
+            elif choice == "10":
+                from .drive_zip_to_r2 import main as drive_zip_to_r2_main
+
+                _run_module_main("app.drive_zip_to_r2", drive_zip_to_r2_main)
             else:
                 print("Lựa chọn không hợp lệ. Vui lòng nhập số trong menu.")
         except SystemExit as exc:
