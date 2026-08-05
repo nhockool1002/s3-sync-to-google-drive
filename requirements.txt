@@ -8,3 +8,9 @@
  python-dotenv
  openai-whisper
  deep-translator
+ Pillow
+ pillow-heif
+ opencv-python
+ numpy
+ selenium
+ reportlab

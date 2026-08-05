@@ -269,14 +269,32 @@ def _run_module_main(module_name: str, main_func: Callable[[], None]) -> None:
 
 def _print_menu() -> None:
     print("\n=== Menu công cụ ===")
+    print("--- Đồng bộ dữ liệu (Sync) ---")
     print("1. Sync AWS S3 -> Google Drive (chạy nền)")
     print("2. Sync AWS S3 -> Google Drive (chạy trực tiếp + progress log)")
-    print("3. Đếm object trong S3")
-    print("4. Đếm file trong Google Drive folder")
-    print("5. Tải file từ Google Drive")
-    print("6. Xem video trong Google Drive folder")
-    print("7. Tạo phụ đề SRT từ video/audio")
-    print("8. Chia video thành 2 phần")
+    print("3. Sync AWS S3 -> Cloudflare R2 (chạy nền)")
+    print("4. Sync Google Drive folder -> NAS (chạy nền)")
+    print("5. Sync Google Drive folder -> Cloudflare R2")
+    print("6. Zip folder Google Drive -> Cloudflare R2")
+    print("--- AWS S3 / Cloudflare R2 ---")
+    print("7. Đếm object trong S3")
+    print("8. Upload file lên Cloudflare R2")
+    print("--- Google Drive ---")
+    print("9. Đếm file trong Google Drive folder")
+    print("10. Tải file từ Google Drive")
+    print("11. Xem video trong Google Drive folder")
+    print("12. Quét / xoá ảnh-video ở My Drive root")
+    print("--- Xử lý ảnh ---")
+    print("13. Xoá watermark cũ và chèn watermark mới cho ảnh")
+    print("14. Nén ảnh hàng loạt")
+    print("15. Convert HEIC/HEIF và nén ảnh hàng loạt")
+    print("--- Xử lý video ---")
+    print("16. Tạo phụ đề SRT từ video/audio")
+    print("17. Chia video thành 2 phần")
+    print("18. Hardsub + nén video + watermark (chạy nền)")
+    print("--- Tiện ích ---")
+    print("19. Clear source/output cho compress/watermark/hardsub/video/heic")
+    print("20. uTest: trích Step1 ảnh + Step2 feedback từ test case")
     print("0. Thoát")
 
 
@@ -305,29 +323,81 @@ def _run_menu(base_args: argparse.Namespace) -> None:
                 sync_args.progress_log = True
                 _run_sync_from_args(sync_args)
             elif choice == "3":
+                from .s3_to_r2 import main as s3_to_r2_main
+
+                _run_module_main("app.s3_to_r2", s3_to_r2_main)
+            elif choice == "4":
+                from .drive_to_nas import main as drive_to_nas_main
+
+                _run_module_main("app.drive_to_nas", drive_to_nas_main)
+            elif choice == "5":
+                from .drive_to_r2 import main as drive_to_r2_main
+
+                _run_module_main("app.drive_to_r2", drive_to_r2_main)
+            elif choice == "6":
+                from .drive_zip_to_r2 import main as drive_zip_to_r2_main
+
+                _run_module_main("app.drive_zip_to_r2", drive_zip_to_r2_main)
+            elif choice == "7":
                 from .count_s3 import main as count_s3_main
 
                 _run_module_main("app.count_s3", count_s3_main)
-            elif choice == "4":
+            elif choice == "8":
+                from .r2_upload import main as r2_upload_main
+
+                _run_module_main("app.r2_upload", r2_upload_main)
+            elif choice == "9":
                 from .count_drive import main as count_drive_main
 
                 _run_module_main("app.count_drive", count_drive_main)
-            elif choice == "5":
+            elif choice == "10":
                 from .drive_download import main as drive_download_main
 
                 _run_module_main("app.drive_download", drive_download_main)
-            elif choice == "6":
+            elif choice == "11":
                 from .view_video_drive import main as view_video_drive_main
 
                 _run_module_main("app.view_video_drive", view_video_drive_main)
-            elif choice == "7":
+            elif choice == "12":
+                from .scan_drive_root_media import main as scan_drive_root_media_main
+
+                _run_module_main(
+                    "app.scan_drive_root_media", scan_drive_root_media_main
+                )
+            elif choice == "13":
+                from .watermark.batch_watermark import main as batch_watermark_main
+
+                _run_module_main(
+                    "app.watermark.batch_watermark", batch_watermark_main
+                )
+            elif choice == "14":
+                from .compress.batch_compress import main as batch_compress_main
+
+                _run_module_main("app.compress.batch_compress", batch_compress_main)
+            elif choice == "15":
+                from .heic.batch_heic import main as batch_heic_main
+
+                _run_module_main("app.heic.batch_heic", batch_heic_main)
+            elif choice == "16":
                 from .whisper_sub import main as whisper_sub_main
 
                 _run_module_main("app.whisper_sub", whisper_sub_main)
-            elif choice == "8":
+            elif choice == "17":
                 from .video_split import main as video_split_main
 
                 _run_module_main("app.video_split", video_split_main)
+            elif choice == "18":
+                from .hardsub.batch_hardsub import main as batch_hardsub_main
+
+                _run_module_main("app.hardsub.batch_hardsub", batch_hardsub_main)
+            elif choice == "19":
+                from .cleanup_dirs import main as cleanup_dirs_main
+
+                _run_module_main("app.cleanup_dirs", cleanup_dirs_main)
+            elif choice == "20":
+                from .utest_claim.claim_testcase import main as claim_testcase_main
+
+                _run_module_main("app.utest_claim.claim_testcase", claim_testcase_main)
             else:
                 print("Lựa chọn không hợp lệ. Vui lòng nhập số trong menu.")
         except SystemExit as exc:

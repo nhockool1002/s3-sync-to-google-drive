@@ -1,7 +1,23 @@
-.venv 
+.venv
 logs
 
 .env
 
 .DS_Store
+__pycache__/
+*.pyc
 credentials.json
+token.json
+token_download.json
+token_drive_manage.json
+_token.json
+
+# Thư mục dữ liệu làm việc (ảnh/video của người dùng), không commit vào git
+/compress/
+/heic/
+/hardsub/
+/video/
+/r2/
+/utest_claim_testcase/
+app/watermark/source/
+app/watermark/output/
