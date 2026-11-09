@@ -21,3 +21,7 @@ _token.json
 /utest_claim_testcase/
 app/watermark/source/
 app/watermark/output/
+
+# GUI build output (PyInstaller .app/.dmg)
+/build/
+/dist/

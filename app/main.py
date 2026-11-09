@@ -292,6 +292,7 @@ def _print_menu() -> None:
     print("16. Tạo phụ đề SRT từ video/audio")
     print("17. Chia video thành 2 phần")
     print("18. Hardsub + nén video + watermark (chạy nền)")
+    print("21. Lồng tiếng Việt cho video (dub)")
     print("--- Tiện ích ---")
     print("19. Clear source/output cho compress/watermark/hardsub/video/heic")
     print("20. uTest: trích Step1 ảnh + Step2 feedback từ test case")
@@ -398,6 +399,10 @@ def _run_menu(base_args: argparse.Namespace) -> None:
                 from .utest_claim.claim_testcase import main as claim_testcase_main
 
                 _run_module_main("app.utest_claim.claim_testcase", claim_testcase_main)
+            elif choice == "21":
+                from .dub_vi import main as dub_vi_main
+
+                _run_module_main("app.dub_vi", dub_vi_main)
             else:
                 print("Lựa chọn không hợp lệ. Vui lòng nhập số trong menu.")
         except SystemExit as exc:

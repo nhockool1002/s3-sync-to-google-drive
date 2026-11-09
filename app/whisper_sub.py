@@ -43,22 +43,40 @@ def format_srt_timestamp(t: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
+_MYMEMORY_LANG_MAP = {
+    "en": "en-US",
+    "vi": "vi-VN",
+    "ja": "ja-JP",
+    "ko": "ko-KR",
+    "zh": "zh-CN",
+    "fr": "fr-FR",
+    "de": "de-DE",
+    "es": "es-ES",
+    "pt": "pt-PT",
+    "ru": "ru-RU",
+    "th": "th-TH",
+}
+
+
 def _translate_one(
-    translator: Any,
+    translators: List[Any],
     text: str,
     *,
-    max_retries: int = 4,
-    base_delay: float = 0.15,
-) -> str:
-    """Dịch một chuỗi, có retry khi lỗi mạng / rate limit."""
-    for attempt in range(max_retries):
-        try:
-            return translator.translate(text)
-        except Exception:
-            if attempt == max_retries - 1:
-                return text
-            time.sleep(base_delay * (2**attempt))
-    return text
+    max_retries: int = 3,
+    base_delay: float = 0.3,
+) -> tuple[str, bool]:
+    """
+    Dịch một chuỗi bằng danh sách translator (thử lần lượt), có retry khi lỗi
+    mạng / rate limit. Trả về (text_đã_dịch_hoặc_gốc, đã_dịch_thành_công?).
+    """
+    for translator in translators:
+        for attempt in range(max_retries):
+            try:
+                return translator.translate(text), True
+            except Exception:
+                if attempt < max_retries - 1:
+                    time.sleep(base_delay * (2**attempt))
+    return text, False
 
 
 def translate_segments_to_vi(
@@ -70,7 +88,7 @@ def translate_segments_to_vi(
     Video dài có thể có hàng nghìn dòng — bước này lâu và cần mạng ổn định.
     """
     try:
-        from deep_translator import GoogleTranslator
+        from deep_translator import GoogleTranslator, MyMemoryTranslator
     except ImportError as exc:
         raise RuntimeError(
             "Cần gói deep-translator: pip install deep-translator"
@@ -80,10 +98,22 @@ def translate_segments_to_vi(
     if sl in ("vi", "vie"):
         return segments
 
+    translators: List[Any] = []
     try:
-        translator = GoogleTranslator(source=sl, target="vi")
+        translators.append(GoogleTranslator(source=sl, target="vi"))
     except Exception:
-        translator = GoogleTranslator(source="auto", target="vi")
+        try:
+            translators.append(GoogleTranslator(source="auto", target="vi"))
+        except Exception:
+            pass
+    try:
+        mymemory_source = _MYMEMORY_LANG_MAP.get(sl, f"{sl}-{sl.upper()}")
+        translators.append(MyMemoryTranslator(source=mymemory_source, target="vi-VN"))
+    except Exception:
+        pass
+
+    if not translators:
+        raise RuntimeError("Không khởi tạo được bất kỳ dịch vụ dịch nào.")
 
     n = len(segments)
     nonempty = sum(1 for s in segments if (s.get("text") or "").strip())
@@ -104,15 +134,25 @@ def translate_segments_to_vi(
             mininterval=0.5,
         )
 
+    failed = 0
     for seg in iterator:
         text = (seg.get("text") or "").strip()
         if not text:
             out.append(seg)
             continue
-        vi_text = _translate_one(translator, text)
+        vi_text, ok = _translate_one(translators, text)
+        if not ok:
+            failed += 1
         new_seg = dict(seg)
         new_seg["text"] = vi_text
         out.append(new_seg)
+
+    if failed:
+        print(
+            f"\nCảnh báo: {failed}/{nonempty} dòng dịch thất bại (giữ nguyên bản gốc) "
+            "do lỗi mạng hoặc bị giới hạn truy vấn (rate limit).\n",
+            file=sys.stderr,
+        )
 
     return out
 

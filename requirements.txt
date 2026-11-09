@@ -14,3 +14,7 @@
  numpy
  selenium
  reportlab
+ edge-tts
+ pydub
+ audioop-lts; python_version >= "3.13"
+ PySide6
